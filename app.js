@@ -214,11 +214,14 @@ async function loadPlaylists() {
     card.className = "playlist";
 
     const imageUrl = playlist.images?.[0]?.url || "";
-    card.innerHTML = `
-      ${imageUrl ? `<img src="${imageUrl}" alt="">` : `<div class="blank-cover"></div>`}
-      <p class="playlist-title">${escapeHtml(playlist.name)}</p>
-      <p class="small">${playlist.tracks.total} tracks</p>
-    `;
+    const trackCount = playlist.tracks?.total ?? 0;
+
+card.innerHTML = `
+  ${imageUrl ? `<img src="${imageUrl}" alt="">` : `<div class="blank-cover"></div>`}
+  <p class="playlist-title">${escapeHtml(playlist.name || "Untitled Playlist")}</p>
+  <p class="small">${trackCount} tracks</p>
+`;
+    
 
     card.addEventListener("click", () => playPlaylist(playlist.uri, playlist.name));
     playlistGrid.appendChild(card);
