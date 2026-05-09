@@ -7,7 +7,7 @@
   4. Do NOT paste a Client Secret into a public GitHub Pages site.
 */
 
-const CLIENT_ID = "PASTE_YOUR_SPOTIFY_CLIENT_ID_HERE";
+const CLIENT_ID = "3c23372a13e64a60ac426c5c5c96a8b0";
 const REDIRECT_URI = "https://player.curvele.cc/";
 
 const SCOPES = [
