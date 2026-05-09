@@ -1,13 +1,19 @@
 /*
   Curvele Spotify Player
-  1. Make a Spotify app at https://developer.spotify.com/dashboard
-  2. Add this Redirect URI in Spotify Dashboard:
-     https://player.curvele.cc/
-  3. Paste your Client ID below.
-  4. Do NOT paste a Client Secret into a public GitHub Pages site.
+
+  Normal option:
+  - Use Spotify login with PKCE.
+  - Put your Spotify Client ID below.
+  - Redirect URI in Spotify Dashboard must be:
+    https://player.curvele.cc/
+
+  Manual token option:
+  - Paste a temporary access token into the page.
+  - Do not upload tokens to GitHub.
+  - Developer tokens expire quickly.
 */
 
-const CLIENT_ID = "3c23372a13e64a60ac426c5c5c96a8b0";
+const CLIENT_ID = "PASTE_YOUR_SPOTIFY_CLIENT_ID_HERE";
 const REDIRECT_URI = "https://player.curvele.cc/";
 
 const SCOPES = [
@@ -21,6 +27,7 @@ const SCOPES = [
 ];
 
 let accessToken = null;
+let authMode = "none"; // "pkce" or "manual"
 let player = null;
 let deviceId = null;
 let isPaused = true;
@@ -28,6 +35,8 @@ let isPaused = true;
 const loginBtn = document.getElementById("loginBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 const refreshBtn = document.getElementById("refreshBtn");
+const manualTokenInput = document.getElementById("manualTokenInput");
+const manualTokenBtn = document.getElementById("manualTokenBtn");
 const playlistGrid = document.getElementById("playlistGrid");
 const statusBox = document.getElementById("statusBox");
 const userInfo = document.getElementById("userInfo");
@@ -45,6 +54,21 @@ const playPauseBtn = document.getElementById("playPauseBtn");
 function setStatus(message, isError = false) {
   statusBox.textContent = message;
   statusBox.style.color = isError ? "#ffb3b3" : "";
+}
+
+function showLoggedInUI() {
+  loginBtn.classList.add("hidden");
+  logoutBtn.classList.remove("hidden");
+  refreshBtn.classList.remove("hidden");
+}
+
+function cleanToken(raw) {
+  return String(raw || "")
+    .trim()
+    .replace(/^Authorization:\s*/i, "")
+    .replace(/^Bearer\s+/i, "")
+    .replace(/^['"]|['"]$/g, "")
+    .trim();
 }
 
 function base64UrlEncode(buffer) {
@@ -111,6 +135,8 @@ async function exchangeCodeForToken(code) {
   }
 
   const data = await response.json();
+
+  localStorage.setItem("spotify_auth_mode", "pkce");
   localStorage.setItem("spotify_access_token", data.access_token);
 
   if (data.refresh_token) {
@@ -142,6 +168,7 @@ async function refreshAccessToken() {
   if (!response.ok) return null;
 
   const data = await response.json();
+  localStorage.setItem("spotify_auth_mode", "pkce");
   localStorage.setItem("spotify_access_token", data.access_token);
 
   if (data.refresh_token) {
@@ -155,14 +182,24 @@ async function refreshAccessToken() {
 }
 
 async function getValidToken() {
+  const storedMode = localStorage.getItem("spotify_auth_mode");
+
+  if (storedMode === "manual") {
+    authMode = "manual";
+    return localStorage.getItem("spotify_manual_access_token");
+  }
+
   const storedToken = localStorage.getItem("spotify_access_token");
   const expiresAt = Number(localStorage.getItem("spotify_expires_at") || 0);
 
   if (storedToken && Date.now() < expiresAt - 60000) {
+    authMode = "pkce";
     return storedToken;
   }
 
-  return await refreshAccessToken();
+  const refreshed = await refreshAccessToken();
+  if (refreshed) authMode = "pkce";
+  return refreshed;
 }
 
 async function spotifyFetch(url, options = {}) {
@@ -178,6 +215,10 @@ async function spotifyFetch(url, options = {}) {
   });
 
   if (!response.ok) {
+    if (response.status === 401 && authMode === "manual") {
+      throw new Error("Manual token expired or is invalid. Paste a fresh token.");
+    }
+
     const text = await response.text();
     throw new Error(`Spotify API error: ${response.status} ${text}`);
   }
@@ -186,9 +227,36 @@ async function spotifyFetch(url, options = {}) {
   return await response.json();
 }
 
+async function useManualToken() {
+  const token = cleanToken(manualTokenInput.value);
+
+  if (!token) {
+    setStatus("Paste the token only, without the word Bearer.", true);
+    return;
+  }
+
+  localStorage.setItem("spotify_auth_mode", "manual");
+  localStorage.setItem("spotify_manual_access_token", token);
+
+  // Clear PKCE tokens so the app uses the manual token.
+  localStorage.removeItem("spotify_access_token");
+  localStorage.removeItem("spotify_refresh_token");
+  localStorage.removeItem("spotify_expires_at");
+  localStorage.removeItem("spotify_code_verifier");
+
+  accessToken = token;
+  authMode = "manual";
+
+  setStatus("Manual token saved in this browser. Checking token...");
+  await startAppAfterAuth();
+}
+
 async function loadProfile() {
   const profile = await spotifyFetch("https://api.spotify.com/v1/me");
-  userInfo.textContent = profile.display_name ? `Logged in as ${profile.display_name}` : "Logged in";
+  const modeLabel = authMode === "manual" ? "manual token" : "Spotify login";
+  userInfo.textContent = profile.display_name
+    ? `Logged in as ${profile.display_name} using ${modeLabel}`
+    : `Logged in using ${modeLabel}`;
 }
 
 async function loadPlaylists() {
@@ -200,7 +268,7 @@ async function loadPlaylists() {
 
   while (url) {
     const data = await spotifyFetch(url);
-    playlists.push(...data.items);
+    playlists.push(...data.items.filter(Boolean));
     url = data.next;
   }
 
@@ -216,14 +284,13 @@ async function loadPlaylists() {
     const imageUrl = playlist.images?.[0]?.url || "";
     const trackCount = playlist.tracks?.total ?? 0;
 
-card.innerHTML = `
-  ${imageUrl ? `<img src="${imageUrl}" alt="">` : `<div class="blank-cover"></div>`}
-  <p class="playlist-title">${escapeHtml(playlist.name || "Untitled Playlist")}</p>
-  <p class="small">${trackCount} tracks</p>
-`;
-    
+    card.innerHTML = `
+      ${imageUrl ? `<img src="${imageUrl}" alt="">` : `<div class="blank-cover"></div>`}
+      <p class="playlist-title">${escapeHtml(playlist.name || "Untitled Playlist")}</p>
+      <p class="small">${trackCount} tracks</p>
+    `;
 
-    card.addEventListener("click", () => playPlaylist(playlist.uri, playlist.name));
+    card.addEventListener("click", () => playPlaylist(playlist.uri, playlist.name || "playlist"));
     playlistGrid.appendChild(card);
   }
 
@@ -262,19 +329,31 @@ async function playPlaylist(contextUri, playlistName) {
     setStatus(`Playing: ${playlistName}`);
   } catch (error) {
     console.error(error);
-    setStatus("Could not start playback. Make sure you have Spotify Premium and no ad blocker is blocking Spotify.", true);
+    setStatus(error.message || "Could not start playback. Make sure you have Spotify Premium.", true);
   }
 }
 
-window.onSpotifyWebPlaybackSDKReady = async () => {
-  accessToken = await getValidToken();
-  if (!accessToken) return;
+async function connectSpotifyPlayer() {
+  const token = await getValidToken();
+  if (!token) return;
+
+  if (player) {
+    try {
+      await player.disconnect();
+    } catch {}
+    player = null;
+  }
+
+  if (!window.Spotify) {
+    setStatus("Spotify SDK is still loading. Refresh if it does not connect.", true);
+    return;
+  }
 
   player = new Spotify.Player({
     name: "Curvele Web Player",
     getOAuthToken: async cb => {
-      const token = await getValidToken();
-      cb(token);
+      const freshToken = await getValidToken();
+      cb(freshToken);
     },
     volume: 0.7
   });
@@ -310,12 +389,32 @@ window.onSpotifyWebPlaybackSDKReady = async () => {
   });
 
   player.addListener("initialization_error", ({ message }) => setStatus(message, true));
-  player.addListener("authentication_error", ({ message }) => setStatus(message, true));
-  player.addListener("account_error", ({ message }) => setStatus("Spotify Premium is required for browser playback.", true));
+  player.addListener("authentication_error", ({ message }) => {
+    const extra = authMode === "manual" ? " Paste a fresh manual token." : "";
+    setStatus(`${message}${extra}`, true);
+  });
+  player.addListener("account_error", () => setStatus("Spotify Premium is required for browser playback.", true));
   player.addListener("playback_error", ({ message }) => setStatus(message, true));
 
   player.connect();
+}
+
+window.onSpotifyWebPlaybackSDKReady = async () => {
+  const token = await getValidToken();
+  if (token) connectSpotifyPlayer();
 };
+
+async function startAppAfterAuth() {
+  try {
+    showLoggedInUI();
+    await loadProfile();
+    await loadPlaylists();
+    await connectSpotifyPlayer();
+  } catch (error) {
+    console.error(error);
+    setStatus(error.message, true);
+  }
+}
 
 async function init() {
   const params = new URLSearchParams(window.location.search);
@@ -331,18 +430,14 @@ async function init() {
     if (code) {
       setStatus("Finishing Spotify login...");
       accessToken = await exchangeCodeForToken(code);
+      authMode = "pkce";
       window.history.replaceState({}, document.title, REDIRECT_URI);
     } else {
       accessToken = await getValidToken();
     }
 
     if (accessToken) {
-      loginBtn.classList.add("hidden");
-      logoutBtn.classList.remove("hidden");
-      refreshBtn.classList.remove("hidden");
-
-      await loadProfile();
-      await loadPlaylists();
+      await startAppAfterAuth();
     }
   } catch (error) {
     console.error(error);
@@ -351,6 +446,8 @@ async function init() {
 }
 
 function logout() {
+  localStorage.removeItem("spotify_auth_mode");
+  localStorage.removeItem("spotify_manual_access_token");
   localStorage.removeItem("spotify_access_token");
   localStorage.removeItem("spotify_refresh_token");
   localStorage.removeItem("spotify_expires_at");
@@ -368,6 +465,7 @@ function escapeHtml(value) {
 }
 
 loginBtn.addEventListener("click", login);
+manualTokenBtn.addEventListener("click", useManualToken);
 logoutBtn.addEventListener("click", logout);
 refreshBtn.addEventListener("click", loadPlaylists);
 

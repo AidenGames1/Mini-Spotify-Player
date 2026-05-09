@@ -12,18 +12,29 @@
       <div>
         <p class="eyebrow">curvele.cc</p>
         <h1>Spotify Player</h1>
-        <p class="subtext">Log in, pick one of your playlists, and play it from this page.</p>
+        <p class="subtext">Log in with Spotify, or paste a temporary developer token for testing.</p>
       </div>
 
       <div class="auth-card">
         <button id="loginBtn" class="primary">Log in with Spotify</button>
-        <button id="logoutBtn" class="secondary hidden">Log out</button>
+
+        <div class="divider">
+          <span></span>
+          <p>or</p>
+          <span></span>
+        </div>
+
+        <label for="manualTokenInput" class="label">Paste access token</label>
+        <textarea id="manualTokenInput" placeholder="Paste token only, not Bearer"></textarea>
+        <button id="manualTokenBtn" class="secondary">Use pasted token</button>
+
+        <button id="logoutBtn" class="secondary hidden">Log out / clear token</button>
         <p id="userInfo" class="small"></p>
       </div>
     </section>
 
     <section id="statusBox" class="status">
-      Waiting for Spotify login.
+      Waiting for Spotify login or pasted token.
     </section>
 
     <section class="player-card">
